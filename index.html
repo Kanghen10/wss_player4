@@ -1,32 +1,49 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <title>Live Streaming CCTV Mojokerto</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta charset="utf-8" />
+  <title>Live Streaming ATCS - Dishub Kabupaten Mojokerto (Clone)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <link rel="icon" type="image/x-icon" href="./atcs.png">
+  <base href="./">
+
+  <!-- preload same chunks as original -->
+  <link rel="preload" href="./_nuxt/2ae0c29.js" as="script">
+  <link rel="preload" href="./_nuxt/42e7d0d.js" as="script">
+  <link rel="preload" href="./_nuxt/5cb7299.js" as="script">
+  <link rel="preload" href="./_nuxt/aefb926.js" as="script">
+
   <style>
-    html, body {
-      margin: 0;
-      padding: 0;
-      background: #000;
-      height: 100%;
-      width: 100%;
-      overflow: hidden;
+    /* full-black background, canvas fills viewport, object-fit contain */
+    html,body {
+      margin:0;
+      padding:0;
+      width:100vw;
+      height:100vh;
+      background:#000;
+      overflow:hidden;
     }
-    canvas {
-      display: block;
-      width: 100vw;
-      height: 100vh;
-      object-fit: contain;
-      background: #000;
+    /* hide everything initially (we'll replace with canvas) */
+    #__nuxt { display:block; width:100vw; height:100vh; background:#000; }
+    /* our canvas will be inserted and styled */
+    .cctv-canvas {
+      width:100vw !important;
+      height:100vh !important;
+      display:block;
+      background:#000 !important;
+      object-fit:contain !important;
     }
+    /* hide any controls or overlays from Nuxt */
+    .vjs-control, video, .controls, .player-ui { display:none !important; }
   </style>
 </head>
 <body>
-  <div id="player-container"></div>
+  <div id="__nuxt">
+    <!-- keep original loading markup for compatibility; we'll remove it when player ready -->
+    <div id="nuxt-loading" aria-live="polite" role="status"><div>Loading...</div></div>
+  </div>
 
-  <!-- Config seperti di web asli -->
+  <!-- keep original Nuxt runtime config (adjust assetsPath to relative) -->
   <script>
     window.__NUXT__ = (function(a) {
       return {
@@ -43,37 +60,139 @@
     }("./"));
   </script>
 
-  <!-- JS asli yang sudah kamu upload ke _nuxt -->
+  <!-- load original Nuxt built chunks (must exist under ./_nuxt/) -->
   <script src="./_nuxt/2ae0c29.js"></script>
   <script src="./_nuxt/42e7d0d.js"></script>
   <script src="./_nuxt/5cb7299.js"></script>
   <script src="./_nuxt/aefb926.js"></script>
+
+  <!-- load jsmpeg (must exist at ./jsmpeg.min.js) -->
   <script src="./jsmpeg.min.js"></script>
 
-  <!-- Player setup -->
+  <!-- Our initialization: remove Nuxt UI and create plain canvas player (no controls) -->
   <script>
-    window.addEventListener('DOMContentLoaded', function() {
-      const streamUrl = location.hash ? location.hash.substring(1) : '';
-      if (!streamUrl) {
-        document.body.innerHTML = '<h2 style="color:white;text-align:center;margin-top:20%;">Tidak ada URL stream</h2>';
-        return;
+    (function () {
+      // Helper: read stream URL from location.hash ONLY (must be full wss://... or ws://...)
+      function getStreamUrl() {
+        return decodeURIComponent(window.location.hash ? window.location.hash.substring(1) : '').trim();
       }
 
-      const canvas = document.createElement('canvas');
-      document.getElementById('player-container').appendChild(canvas);
+      // Create and insert canvas full-screen
+      function makeCanvas() {
+        const canvas = document.createElement('canvas');
+        canvas.id = 'cctv-canvas';
+        canvas.className = 'cctv-canvas';
+        // ensure internal resolution reasonable (JSMpeg will scale)
+        canvas.width = Math.max(window.innerWidth, 960);
+        canvas.height = Math.max(window.innerHeight, 540);
+        // remove Nuxt content and append canvas
+        const root = document.getElementById('__nuxt');
+        if (root) {
+          // remove everything child nodes (we want a clean UI)
+          while (root.firstChild) root.removeChild(root.firstChild);
+          root.appendChild(canvas);
+        } else {
+          document.body.appendChild(canvas);
+        }
+        return canvas;
+      }
 
-      const player = new JSMpeg.Player(streamUrl, {
-        canvas: canvas,
-        autoplay: true,
-        audio: false,
-        loop: true
+      // Detect WebView (simple heuristics) — only then attempt fullscreen API
+      function isWebView() {
+        const ua = navigator.userAgent || navigator.vendor || '';
+        return (
+          ua.indexOf('wv') !== -1 || // Android WebView (common)
+          (ua.indexOf('Android') !== -1 && ua.indexOf('Version/') !== -1) || // some Android webviews
+          (ua.indexOf('iPhone') !== -1 && ua.indexOf('Safari') === -1) // iOS WebView (approx)
+        );
+      }
+
+      // Try request fullscreen (may be blocked if no user gesture in normal browsers)
+      function tryFullscreen(elem) {
+        try {
+          if (!elem) elem = document.documentElement;
+          if (elem.requestFullscreen) return elem.requestFullscreen();
+          if (elem.webkitRequestFullscreen) return elem.webkitRequestFullscreen();
+          if (elem.mozRequestFullScreen) return elem.mozRequestFullScreen();
+          if (elem.msRequestFullscreen) return elem.msRequestFullscreen();
+        } catch (e) {
+          // ignored (likely permission/user gesture issue)
+          console.warn('requestFullscreen blocked or failed:', e && e.message);
+        }
+      }
+
+      // Initialize player
+      function startPlayer() {
+        const url = getStreamUrl();
+        if (!url) {
+          // no stream: leave black screen, optionally log
+          console.warn('No stream URL provided in location.hash. Use: #wss://host/... ');
+          return;
+        }
+
+        // Create canvas and instantiate JSMpeg
+        const canvas = makeCanvas();
+
+        // options tuned for robustness: audio:false, autoplay true
+        const opts = {
+          canvas: canvas,
+          autoplay: true,
+          audio: false,
+          loop: true,
+          disableGl: true // fallback to software renderer if needed
+        };
+
+        try {
+          // JSMpeg should be available from jsmpeg.min.js loaded above
+          if (window.JSMpeg && typeof window.JSMpeg.Player === 'function') {
+            const player = new window.JSMpeg.Player(url, opts);
+
+            // If running inside WebView, request fullscreen after small delay
+            if (isWebView()) {
+              setTimeout(function () { tryFullscreen(canvas); }, 400);
+            }
+
+            // Auto-reconnect logic: if socket closes, try reconnect few times
+            // (simple strategy: recreate player after delay)
+            // We'll attach to player's source websocket if possible
+            try {
+              const src = player.source;
+              if (src && src.websocket) {
+                src.websocket.addEventListener('close', function () {
+                  console.warn('WebSocket closed; attempting reconnect in 1s');
+                  setTimeout(function () {
+                    try { player.destroy && player.destroy(); } catch(e){}
+                    startPlayer(); // recreate
+                  }, 1000);
+                });
+                src.websocket.addEventListener('error', function (ev) {
+                  console.warn('WebSocket error', ev);
+                });
+              }
+            } catch (e) {
+              // ignore if structure differs
+            }
+          } else {
+            console.error('JSMpeg library not found. Ensure ./jsmpeg.min.js is present.');
+          }
+        } catch (err) {
+          console.error('Failed to start player:', err);
+        }
+      }
+
+      // Wait until DOM + scripts have had a chance to initialize
+      // Some Nuxt chunks may execute; we still override UI to plain canvas.
+      window.addEventListener('load', function () {
+        // small delay so any Nuxt-initialization finishes before we remove UI
+        setTimeout(startPlayer, 250);
       });
 
-      // Auto fullscreen setelah load
-      setTimeout(() => {
-        if (canvas.requestFullscreen) canvas.requestFullscreen();
-      }, 1000);
-    });
+      // Also allow reload of stream when hash changes (so user can change stream on the fly)
+      window.addEventListener('hashchange', function () {
+        // re-run startPlayer: remove existing canvas and start new
+        setTimeout(startPlayer, 200);
+      });
+    })();
   </script>
 </body>
 </html>
