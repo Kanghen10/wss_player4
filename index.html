@@ -35,25 +35,25 @@
 
       console.log("[player] Tes koneksi WSS:", hash);
 
-      // Setup config streamedian
       const element = document.getElementById('player');
+
       try {
-        const player = new window.Streamedian.player(element, {
+        const player = new window.Streamedian.WSPlayer(element, {
           socket: hash,
           protocols: ['tcp'],
           autoplay: true
         });
-        console.log("[player] Streamedian aktif");
+        console.log("[player] Streamedian WSPlayer aktif");
       } catch (err) {
         console.error("[player] Gagal memulai Streamedian:", err);
         document.body.innerHTML = "<h2 style='color:white;text-align:center;'>Streamedian gagal load</h2>";
+        return;
       }
 
       // coba auto fullscreen (mungkin gagal tanpa gesture user)
-      const video = document.getElementById("player");
-      video.addEventListener("play", () => {
-        if (video.requestFullscreen) {
-          video.requestFullscreen().catch(err => {
+      element.addEventListener("play", () => {
+        if (element.requestFullscreen) {
+          element.requestFullscreen().catch(err => {
             console.warn("Fullscreen gagal:", err);
           });
         }
