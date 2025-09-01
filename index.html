@@ -1,163 +1,92 @@
-<!doctype html>
-<html lang="en">
+<!DOCTYPE html>
+<html lang="id">
 <head>
-  <meta charset="utf-8" />
-  <title>Live Streaming ATCS - Dishub Kabupaten Mojokerto (Clone)</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <link rel="icon" type="image/x-icon" href="./atcs.png">
-  <base href="./">
-
-  <!-- preload same chunks as original -->
-  <link rel="preload" href="./_nuxt/2ae0c29.js" as="script">
-  <link rel="preload" href="./_nuxt/42e7d0d.js" as="script">
-  <link rel="preload" href="./_nuxt/5cb7299.js" as="script">
-  <link rel="preload" href="./_nuxt/aefb926.js" as="script">
-
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>WSS CCTV Player</title>
   <style>
-    html,body {
-      margin:0;
-      padding:0;
-      width:100vw;
-      height:100vh;
-      background:#000;
-      overflow:hidden;
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #000;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
     }
-    /* keep root area black and full */
-    #__nuxt { width:100vw; height:100vh; background:#000; }
-    /* any video/canvas we insert should follow these rules */
-    video, canvas, .cctv-canvas {
-      width:100vw !important;
-      height:100vh !important;
-      display:block !important;
-      background:#000 !important;
-      object-fit:contain !important;
+    video {
+      width: 100vw;
+      height: 100vh;
+      object-fit: contain;
+      background: #000;
+      display: block;
     }
-    /* hide UI controls if Nuxt tries to render them */
-    .player-controls, .controls, .vjs-control, .vjs-control-bar, .vjs-big-play-button { display:none !important; }
+    #error {
+      position: fixed;
+      top: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.7);
+      color: #ffdddd;
+      padding: 10px 14px;
+      border-radius: 6px;
+      font-family: sans-serif;
+      font-size: 14px;
+      z-index: 10000;
+      display: none;
+    }
   </style>
 </head>
 <body>
-  <div id="__nuxt">
-    <!-- original loading spinner kept for compatibility -->
-    <div id="nuxt-loading" aria-live="polite" role="status"><div>Loading...</div></div>
-  </div>
+  <video id="player" autoplay playsinline></video>
+  <div id="error"></div>
 
-  <!-- --- INJECTION: override behavior BEFORE Nuxt chunks run --- -->
+  <!-- Load lokal script -->
+  <script src="./js/video-stream.js"></script>
+  <script src="./js/video-rtc.js"></script>
+
   <script>
-    (function(){
-      // Get the desired stream URL from the hash (strict: only accept wss:// or ws://)
-      function getHashStream() {
-        try {
-          var s = decodeURIComponent(window.location.hash || '');
-          if (s && s.length > 1) {
-            s = s.substring(1).trim();
-            if (/^wss?:\/\//i.test(s)) return s;
-          }
-        } catch(e){}
-        return null;
+    (async () => {
+      const video = document.getElementById("player");
+      const errorBox = document.getElementById("error");
+
+      function showError(msg) {
+        errorBox.textContent = msg;
+        errorBox.style.display = "block";
+        console.error("[player]", msg);
       }
-      const desiredStream = getHashStream();
 
-      // Expose for debugging
-      window.__DESIRED_STREAM = desiredStream || null;
-
-      // If no desired stream present, don't override -- let app use default
-      if (!desiredStream) {
-        console.info('[patch] no stream in hash, Nuxt will use default.');
+      // Ambil URL dari hash
+      const streamUrl = decodeURIComponent(location.hash.slice(1));
+      if (!streamUrl) {
+        showError("Tambahkan URL WSS di hash (#). Contoh: #wss://dishubstreaming.mojokertokab.go.id/rtsp/xxxx");
         return;
       }
+      console.log("Playing:", streamUrl);
 
-      console.info('[patch] desired stream from hash:', desiredStream);
+      // Buat player
+      try {
+        const player = new window.Go2RTCPlayer(video, streamUrl);
 
-      // Patch WebSocket constructor to substitute URLs that touch dishubstreaming domain
-      const OriginalWebSocket = window.WebSocket;
-      function PatchedWebSocket(url, protocols) {
-        // if url contains dishubstreaming host, replace with exact desired stream
-        try {
-          if (typeof url === 'string' && url.indexOf('dishubstreaming.mojokertokab.go.id') !== -1) {
-            console.info('[patch] rewriting websocket URL', url, '→', desiredStream);
-            url = desiredStream;
+        // Autoplay
+        video.muted = false;
+        await video.play().catch(async () => {
+          video.muted = true;
+          await video.play().catch(err => {
+            showError("Autoplay gagal, klik layar untuk mulai.");
+          });
+        });
+
+        // Auto fullscreen setelah load
+        video.addEventListener("loadeddata", () => {
+          if (document.fullscreenEnabled) {
+            try { video.requestFullscreen(); } catch (e) {}
           }
-        } catch(e) {
-          console.warn('[patch] rewrite check failed', e);
-        }
+        });
 
-        // create the real websocket instance
-        if (protocols !== undefined) {
-          return new OriginalWebSocket(url, protocols);
-        } else {
-          return new OriginalWebSocket(url);
-        }
+      } catch (err) {
+        showError("Player error: " + err.message);
       }
-      // copy static properties
-      PatchedWebSocket.prototype = OriginalWebSocket.prototype;
-      Object.keys(OriginalWebSocket).forEach(k => { try{ PatchedWebSocket[k] = OriginalWebSocket[k]; }catch(e){} });
-
-      // Replace global WebSocket
-      window.WebSocket = PatchedWebSocket;
-
-      // Also patch navigator.userAgent? (no) — leave unchanged.
-
-      // Optional: monitor created websockets for debugging
-      // (note: not all browsers allow enumerating instances)
-      console.info('[patch] WebSocket patched to rewrite dishubstreaming connections.');
     })();
-  </script>
-  <!-- --- end injection --- -->
-
-  <!-- Nuxt runtime config (adjust assetsPath to relative so _nuxt loads from repo) -->
-  <script>
-    window.__NUXT__ = (function(a) {
-      return {
-        config: {
-          tokenKey: "secretAtcsMojokerto",
-          baseUrl: a,
-          _app: {
-            basePath: a,
-            assetsPath: "./_nuxt/",
-            cdnURL: null
-          }
-        }
-      }
-    }("./"));
-  </script>
-
-  <!-- load original Nuxt built chunks (must exist under ./_nuxt/) -->
-  <script src="./_nuxt/2ae0c29.js"></script>
-  <script src="./_nuxt/42e7d0d.js"></script>
-  <script src="./_nuxt/5cb7299.js"></script>
-  <script src="./_nuxt/aefb926.js"></script>
-
-  <!-- After Nuxt loaded, ensure UI remains plain black and no controls -->
-  <script>
-    // Remove any visible controls that Nuxt might show (extra safety)
-    function hideUI() {
-      document.querySelectorAll('.player-controls, .controls, .vjs-control, .vjs-control-bar, button, .btn').forEach(el => {
-        try { el.style.display = 'none'; } catch(e){}
-      });
-    }
-
-    // Keep root container black and remove any margins/popups
-    function enforcePlainUI() {
-      document.documentElement.style.background = '#000';
-      document.body.style.background = '#000';
-      document.getElementById('__nuxt') && (document.getElementById('__nuxt').style.background = '#000');
-      hideUI();
-    }
-
-    // Try enforce a few times (in case Nuxt re-renders)
-    window.addEventListener('load', function(){
-      enforcePlainUI();
-      setTimeout(enforcePlainUI, 500);
-      setTimeout(enforcePlainUI, 1500);
-    });
-
-    // If user changes hash after page loaded, reload to apply new stream
-    window.addEventListener('hashchange', function() {
-      console.info('hash changed — reloading to apply new stream');
-      // quick reload so injected patch picks up new hash
-      location.reload();
-    });
   </script>
 </body>
 </html>
