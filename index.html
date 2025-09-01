@@ -1,260 +1,65 @@
 <!DOCTYPE html>
-<html lang="id">
+<html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>WSS RTSP Player (autoplay, fullscreen, no controls)</title>
-<style>
-  html,body{margin:0;height:100%;background:#000;overflow:hidden}
-  #stage{
-    position:fixed;inset:0;background:#000;
-    display:flex;align-items:center;justify-content:center
-  }
-  video,canvas{
-    width:100vw;height:100vh;object-fit:contain;background:#000;display:block
-  }
-  #status{
-    position:fixed;left:12px;bottom:12px;z-index:9999;
-    padding:8px 10px;border-radius:6px;
-    background:rgba(0,0,0,.55);color:#fff;font:13px/1.3 monospace
+  <meta charset="UTF-8">
+  <title>WSS Player 4</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      background: #000;
+      overflow: hidden;
     }
-  #error{
-    position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:10000;
-    padding:10px 14px;border-radius:6px;background:#2b2b2b;color:#ffdddd;
-    font:14px/1.4 system-ui, -apple-system, "Segoe UI", Arial, sans-serif;display:none
-  }
-  #tap{
-    position:fixed;inset:0;display:none;align-items:center;justify-content:center;
-    background:rgba(0,0,0,.35);color:#fff;z-index:10001;cursor:pointer;
-    font:16px/1.5 system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
-    user-select:none
-  }
-  #tap > div{
-    background:rgba(0,0,0,.55);padding:10px 16px;border-radius:10px
-  }
-</style>
+    #player {
+      width: 100vw;
+      height: 100vh;
+      object-fit: contain;
+      background: #000;
+    }
+  </style>
 </head>
 <body>
-<div id="stage">
-  <!-- Streamedian pakai <video>, JSMpeg pakai <canvas> -->
-  <video id="v" playsinline></video>
-  <canvas id="c" style="display:none"></canvas>
-</div>
-<div id="tap"><div>Ketuk untuk memulai ▶</div></div>
-<div id="status">init…</div>
-<div id="error" role="alert"></div>
+  <video id="player" autoplay playsinline></video>
 
-<script>
-  const $ = s => document.querySelector(s);
-  const log = (m)=>{ $('#status').textContent = m; console.log('[player]', m); };
-  const showErr = (m)=>{ const e=$('#error'); e.textContent=m; e.style.display='block'; console.error('[player]', m); };
-
-  // ---- loader dgn fallback: local /js lalu CDN ----
-  function loadScriptSequential(urls){
-    return new Promise(resolve=>{
-      const tryNext = (i)=> {
-        if(i>=urls.length){ resolve(false); return; }
-        const s=document.createElement('script');
-        s.src=urls[i]; s.async=true; s.onload=()=>resolve(true);
-        s.onerror=()=>{ console.warn('fail', urls[i]); tryNext(i+1); };
-        document.head.appendChild(s);
-      };
-      tryNext(0);
-    });
-  }
-
-  // Ambil hash & param
-  function parseHash(){
-    const raw = decodeURIComponent(location.hash.slice(1) || '');
-    const out = { url:'', engine:'' };
-    if(!raw) return out;
-    // dukung format: #wss://... atau #wss://...?a=b&engine=jsmpeg
-    const parts = raw.split('&');
-    out.url = parts[0];
-    for(let i=1;i<parts.length;i++){
-      const [k,v] = parts[i].split('=');
-      if(k==='engine') out.engine = (v||'').toLowerCase();
-    }
-    return out;
-  }
-
-  // Uji handshake WSS lebih dulu supaya error-nya jelas
-  function testWS(u, timeout=4000){
-    return new Promise(res=>{
-      let done=false, ws;
-      const end=(ok,info)=>{ if(done) return; done=true; try{ws&&ws.close()}catch(e){} res({ok,info}); };
-      try{
-        ws = new WebSocket(u);
-      }catch(e){
-        end(false, 'URL tidak valid / browser memblokir: '+e.message);
+  <script src="./js/streamedian.min.js"></script>
+  <script>
+    async function main() {
+      const hash = decodeURIComponent(location.hash.slice(1));
+      if (!hash) {
+        document.body.innerHTML = "<h2 style='color:white;text-align:center;'>[player] Tidak ada URL stream</h2>";
         return;
       }
-      const t=setTimeout(()=> end(false,'timeout / mungkin Origin diblokir'), timeout);
-      ws.onopen=()=>{ clearTimeout(t); end(true,'open'); };
-      ws.onerror=()=>{ clearTimeout(t); end(false,'onerror (kemungkinan Origin/sertifikat)'); };
-    });
-  }
 
-  // Fullscreen helper
-  async function goFullscreen(el){
-    try{
-      if(document.fullscreenElement) return;
-      if(el.requestFullscreen) await el.requestFullscreen();
-    }catch(e){}
-  }
+      console.log("[player] Tes koneksi WSS:", hash);
 
-  (async function main(){
-    const {url, engine} = parseHash();
-    if(!url){
-      log('Masukkan WSS di hash. Contoh: #wss://dishubstreaming.mojokertokab.go.id/rtsp/<UUID>');
-      return;
-    }
-    if(!/^wss?:\/\//i.test(url)){
-      showErr('Hash harus diawali ws:// atau wss://'); return;
-    }
-
-    log('Tes koneksi WSS…');
-    const probe = await testWS(url);
-    if(!probe.ok){
-      showErr('Gagal handshake WSS: '+probe.info+' — Jika server membatasi Origin, player dari GitHub Pages akan ditolak.');
-      // lanjut tetap coba engine supaya kamu bisa melihat perilaku player
-    }else{
-      log('WSS OK, memuat engine…');
-    }
-
-    // siapkan klik-overlay utk izin audio jika autoplay ditolak
-    const needUserGesture = ()=> new Promise(resolve=>{
-      const tap = $('#tap');
-      tap.style.display='flex';
-      const once = async ()=>{
-        tap.style.display='none';
-        document.removeEventListener('click', once);
-        resolve();
-      };
-      document.addEventListener('click', once, {once:true});
-    });
-
-    // ---- ENGINE A: Streamedian ----
-    async function startStreamedian(){
-      log('Memuat Streamedian…');
-      const ok = await loadScriptSequential([
-        // lokal
-        './js/streamedian.min.js',
-        // CDN jsDelivr (repo resmi)
-        'https://cdn.jsdelivr.net/gh/Streamedian/html5_rtsp_player/streamedian.min.js'
-      ]);
-      if(!ok || !(window.Streamedian && window.Streamedian.WSPlayer)){
-        throw new Error('Streamedian tidak tersedia');
-      }
-
-      const el = $('#v');
-      el.style.display = 'block';
-      $('#c').style.display = 'none';
-
-      // Tidak pakai controls; biarkan audio menyala (tidak di-mute)
-      el.removeAttribute('muted');
-      el.removeAttribute('controls');
-
-      // Beberapa implementasi WSS “rtsp/UUID” tidak perlu RTSP URL di <source>,
-      // cukup endpoint WS karena mapping ada di server.
-      // Streamedian biasanya butuh <source src="rtsp://…">, tapi kita coba mode socket-only dulu.
-      // Banyak gateway modern menerima ini.
-      let player;
-      try{
-        player = new window.Streamedian.WSPlayer(el, {
-          socket: url,                 // WSS endpoint langsung
-          autoplay: true,
-          videoBufferSize: 1024*1024,  // buffer aman
-          redirectNativeMediaErrors: true
+      // Setup config streamedian
+      const element = document.getElementById('player');
+      try {
+        const player = new window.Streamedian.player(element, {
+          socket: hash,
+          protocols: ['tcp'],
+          autoplay: true
         });
-      }catch(e){
-        throw new Error('Inisialisasi Streamedian gagal: '+e.message);
+        console.log("[player] Streamedian aktif");
+      } catch (err) {
+        console.error("[player] Gagal memulai Streamedian:", err);
+        document.body.innerHTML = "<h2 style='color:white;text-align:center;'>Streamedian gagal load</h2>";
       }
 
-      // Coba play + fullscreen saat mulai
-      const tryPlay = async ()=>{
-        try{
-          await el.play();
-          await goFullscreen(el);
-          log('playing (Streamedian)');
-        }catch(err){
-          log('Autoplay audio diblokir — minta gesture user');
-          await needUserGesture();
-          try{
-            await el.play();
-            await goFullscreen(el);
-            log('playing (Streamedian, by user)');
-          }catch(e2){
-            throw new Error('Gagal memulai playback: '+e2.message);
-          }
+      // coba auto fullscreen (mungkin gagal tanpa gesture user)
+      const video = document.getElementById("player");
+      video.addEventListener("play", () => {
+        if (video.requestFullscreen) {
+          video.requestFullscreen().catch(err => {
+            console.warn("Fullscreen gagal:", err);
+          });
         }
-      };
-      await tryPlay();
-
-      // listener error
-      el.addEventListener('error', ()=>showErr('Player error (Streamedian). Cek Origin/TLS/protokol server.'));
-      return {engine:'streamedian', player};
+      });
     }
-
-    // ---- ENGINE B: JSMpeg (MPEG-TS over WebSocket) ----
-    async function startJSMpeg(){
-      log('Memuat JSMpeg…');
-      const ok = await loadScriptSequential([
-        './js/jsmpeg.min.js',
-        'https://cdn.jsdelivr.net/npm/jsmpeg@0.2.1/jsmpeg.min.js',
-        'https://cdn.jsdelivr.net/npm/jsmpeg@latest/jsmpeg.min.js'
-      ]);
-      if(!ok || !window.JSMpeg){
-        throw new Error('JSMpeg tidak tersedia');
-      }
-      const canvas = $('#c');
-      canvas.style.display='block';
-      $('#v').style.display='none';
-
-      let player;
-      try{
-        player = new window.JSMpeg.Player(url, {
-          canvas,
-          autoplay:true,
-          audio:true,
-          disableGl:false,
-          progressive:false,
-          // buffering default jsmpeg; kalau macet, bisa tambah: decodeFirstFrame:true
-        });
-      }catch(e){
-        throw new Error('Inisialisasi JSMpeg gagal: '+e.message);
-      }
-
-      // JSMpeg autoplay biasanya langsung jalan; jika tidak, minta gesture
-      if(!player || !player.renderer){
-        await needUserGesture();
-        player.play();
-      }
-      await goFullscreen(canvas);
-      log('playing (JSMpeg)');
-      return {engine:'jsmpeg', player};
-    }
-
-    // Eksekusi: pilih engine (force via &engine=… atau auto: Streamedian→JSMpeg)
-    try{
-      let result;
-      if(engine==='streamedian'){ result = await startStreamedian(); }
-      else if(engine==='jsmpeg'){ result = await startJSMpeg(); }
-      else{
-        try{
-          result = await startStreamedian();
-        }catch(e1){
-          console.warn(e1);
-          log('Fallback ke JSMpeg…');
-          result = await startJSMpeg();
-        }
-      }
-      console.log('Engine aktif:', result.engine);
-    }catch(finalErr){
-      showErr(finalErr.message);
-      log('stop.');
-    }
-  })();
-</script>
+    main();
+  </script>
 </body>
 </html>
