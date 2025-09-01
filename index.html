@@ -1,65 +1,50 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="id">
 <head>
-  <meta charset="UTF-8">
-  <title>WSS Player 4</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <style>
-    html, body {
-      margin: 0;
-      padding: 0;
-      width: 100%;
-      height: 100%;
-      background: #000;
-      overflow: hidden;
-    }
-    #player {
-      width: 100vw;
-      height: 100vh;
-      object-fit: contain;
-      background: #000;
-    }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WSS RTSP Player (Adaptif)</title>
+<style>
+  html, body { margin:0; padding:0; width:100%; height:100%; background:#000; overflow:hidden }
+  video { width:100vw; height:100vh; object-fit:contain; background:#000 }
+</style>
 </head>
 <body>
   <video id="player" autoplay playsinline></video>
-
   <script src="./js/streamedian.min.js"></script>
   <script>
-    async function main() {
-      const hash = decodeURIComponent(location.hash.slice(1));
-      if (!hash) {
-        document.body.innerHTML = "<h2 style='color:white;text-align:center;'>[player] Tidak ada URL stream</h2>";
-        return;
-      }
+    const url = decodeURIComponent(location.hash.slice(1));
+    const videoEl = document.getElementById('player');
 
-      console.log("[player] Tes koneksi WSS:", hash);
-
-      const element = document.getElementById('player');
-
+    if (!url) {
+      alert("Hash kosong, tambahkan #wss://...");
+    } else {
       try {
-        const player = new window.Streamedian.WSPlayer(element, {
-          socket: hash,
-          protocols: ['tcp'],
-          autoplay: true
-        });
-        console.log("[player] Streamedian WSPlayer aktif");
-      } catch (err) {
-        console.error("[player] Gagal memulai Streamedian:", err);
-        document.body.innerHTML = "<h2 style='color:white;text-align:center;'>Streamedian gagal load</h2>";
-        return;
-      }
+        let PlayerClass = null;
 
-      // coba auto fullscreen (mungkin gagal tanpa gesture user)
-      element.addEventListener("play", () => {
-        if (element.requestFullscreen) {
-          element.requestFullscreen().catch(err => {
-            console.warn("Fullscreen gagal:", err);
-          });
+        if (window.Streamedian) {
+          if (typeof window.Streamedian.WSPlayer === "function") {
+            PlayerClass = window.Streamedian.WSPlayer;
+            console.log("[player] pakai WSPlayer");
+          } else if (typeof window.Streamedian.player === "function") {
+            PlayerClass = window.Streamedian.player;
+            console.log("[player] pakai player()");
+          } else if (typeof window.Streamedian.RTSPClient === "function") {
+            PlayerClass = window.Streamedian.RTSPClient;
+            console.log("[player] pakai RTSPClient");
+          }
         }
-      });
+
+        if (!PlayerClass) {
+          throw new Error("Tidak ada class player yang valid di Streamedian");
+        }
+
+        new PlayerClass(videoEl, { socket: url, autoplay: true });
+      } catch (e) {
+        console.error("[player] Gagal start:", e);
+        alert("Error: " + e.message);
+      }
     }
-    main();
   </script>
 </body>
 </html>
